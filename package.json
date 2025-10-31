@@ -1,0 +1,29 @@
+{
+  "name": "dropship-ali express-api",
+  "version": "1.0.0",
+  "description": "AliExpress Product API Backend for Dropship Platform",
+  "main": "aliexpress-api.js",
+  "type": "module",
+  "scripts": {
+    "start": "node aliexpress-api.js",
+    "dev": "node --watch aliexpress-api.js"
+  },
+  "keywords": [
+    "aliexpress",
+    "dropship",
+    "api",
+    "scraping"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "jsdom": "^23.0.1",
+    "node-fetch": "^3.3.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+

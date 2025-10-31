@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: aliexpress-api
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        fromService:
+          type: web
+          name: aliexpress-api
+          property: port
+    healthCheckPath: /healthz
+
