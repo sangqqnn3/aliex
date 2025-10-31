@@ -40,22 +40,39 @@ async function fetchAliExpressProduct(url) {
         // Fetch the product page with proper headers
         const response = await fetch(url, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9,vi;q=0.8',
                 'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Cache-Control': 'max-age=0',
+                'Referer': 'https://www.aliexpress.com/'
+                // Note: Removed Accept-Encoding - node-fetch handles decompression automatically
             },
-            timeout: 30000 // 30 seconds timeout
+            timeout: 30000, // 30 seconds timeout
+            redirect: 'follow', // Follow redirects
+            follow: 5 // Maximum 5 redirects
         });
 
+        console.log('Response status:', response.status, response.statusText);
+        console.log('Response URL:', response.url);
+        
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
 
         const html = await response.text();
         console.log('HTML length:', html.length);
+        console.log('HTML first 500 chars:', html.substring(0, 500));
+        
+        // Check if we got redirected to a different page
+        if (html.length < 5000) {
+            console.log('WARNING: HTML is too short, might be error page or redirect');
+            console.log('HTML preview:', html.substring(0, 1000));
+        }
         
         // First, try to extract data from window.runParams or similar JSON in script tags
         let productData = null;
@@ -66,12 +83,12 @@ async function fetchAliExpressProduct(url) {
             console.log('Found window._d_c_.DCData at position:', dcDataStart);
             
             // Extract a large chunk starting from DCData
-            const dcDataSection = html.substring(dcDataStart, dcDataStart + 100000); // 100KB should be enough
+            const dcDataSection = html.substring(dcDataStart, dcDataStart + 200000); // 200KB should be enough
             
-            // Find the start of JSON object
-            const assignmentPos = html.indexOf('=', dcDataStart);
+            // Find the assignment '=' operator
+            const assignmentPos = dcDataSection.indexOf('=', dcDataSection.indexOf('DCData'));
             if (assignmentPos !== -1) {
-                const openBrace = dcDataSection.indexOf('{', assignmentPos - dcDataStart);
+                const openBrace = dcDataSection.indexOf('{', assignmentPos);
                 if (openBrace !== -1) {
                     // Find matching closing brace
                     let braceCount = 0;
@@ -93,9 +110,17 @@ async function fetchAliExpressProduct(url) {
                             console.log('DCData parsed successfully, keys:', Object.keys(dcData));
                             
                             // Extract from DCData
+                            // Note: dcData.name might be "ItemDetailResp" or similar, not the actual product title
+                            // So we primarily use this for images and other metadata
                             if (dcData.imagePathList && dcData.imagePathList.length > 0) {
+                                // Get title from meta tags first, fallback to name/subject
+                                const dom = new JSDOM(html);
+                                const document = dom.window.document;
+                                const ogTitle = document.querySelector('meta[property="og:title"]');
+                                const title = ogTitle?.getAttribute('content') || dcData.name || dcData.subject || '';
+                                
                                 productData = {
-                                    title: dcData.name || dcData.subject || '',
+                                    title: title,
                                     salePrice: dcData.price || dcData.salePrice || 0,
                                     originalPrice: dcData.originalPrice || dcData.origPrice || dcData.price || 0,
                                     rating: dcData.rating || dcData.avgStar || 0,
@@ -105,19 +130,6 @@ async function fetchAliExpressProduct(url) {
                                     specs: []
                                 };
                                 console.log('Extracted from DCData:', productData.title, productData.images.length, 'images');
-                            } else if (dcData.name || dcData.subject) {
-                                // Fallback: even without images, extract title
-                                productData = {
-                                    title: dcData.name || dcData.subject || '',
-                                    salePrice: 0,
-                                    originalPrice: 0,
-                                    rating: 0,
-                                    reviews: 0,
-                                    images: [],
-                                    description: dcData.description || '',
-                                    specs: []
-                                };
-                                console.log('Extracted title from DCData:', productData.title);
                             }
                         } catch (e) {
                             console.log('Failed to parse DCData JSON:', e.message);
@@ -456,6 +468,21 @@ async function fetchAliExpressProduct(url) {
                 }
             }
         } // End of if (!productData) block
+        
+        // If we still don't have productData, create a minimal fallback
+        if (!productData) {
+            console.log('WARNING: No product data extracted, using minimal fallback');
+            productData = {
+                title: 'Product',
+                salePrice: 0,
+                originalPrice: 0,
+                rating: 0,
+                reviews: 0,
+                images: [],
+                description: '',
+                specs: []
+            };
+        }
 
         // Ensure minimum required fields and log what we found
         if (!productData.salePrice || productData.salePrice === 0) {
