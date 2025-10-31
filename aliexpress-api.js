@@ -60,19 +60,81 @@ async function fetchAliExpressProduct(url) {
         // First, try to extract data from window.runParams or similar JSON in script tags
         let productData = null;
         
-        // Method 1: Extract from window.runParams - try multiple patterns
-        // Look for window.runParams with more flexible matching
+        // Method 1: Extract from window._d_c_.DCData (new format)
+        const dcDataStart = html.indexOf('window._d_c_.DCData');
+        if (dcDataStart !== -1) {
+            console.log('Found window._d_c_.DCData at position:', dcDataStart);
+            
+            // Extract a large chunk starting from DCData
+            const dcDataSection = html.substring(dcDataStart, dcDataStart + 100000); // 100KB should be enough
+            
+            // Find the start of JSON object
+            const assignmentPos = html.indexOf('=', dcDataStart);
+            if (assignmentPos !== -1) {
+                const openBrace = dcDataSection.indexOf('{', assignmentPos - dcDataStart);
+                if (openBrace !== -1) {
+                    // Find matching closing brace
+                    let braceCount = 0;
+                    let closePos = openBrace;
+                    for (let i = openBrace; i < dcDataSection.length; i++) {
+                        if (dcDataSection[i] === '{') braceCount++;
+                        if (dcDataSection[i] === '}') braceCount--;
+                        if (braceCount === 0) {
+                            closePos = i;
+                            break;
+                        }
+                    }
+                    
+                    if (closePos > openBrace) {
+                        try {
+                            const jsonStr = dcDataSection.substring(openBrace, closePos + 1);
+                            console.log('Attempting to parse DCData JSON, length:', jsonStr.length);
+                            const dcData = JSON.parse(jsonStr);
+                            console.log('DCData parsed successfully, keys:', Object.keys(dcData));
+                            
+                            // Extract from DCData
+                            if (dcData.imagePathList && dcData.imagePathList.length > 0) {
+                                productData = {
+                                    title: dcData.name || dcData.subject || '',
+                                    salePrice: dcData.price || dcData.salePrice || 0,
+                                    originalPrice: dcData.originalPrice || dcData.origPrice || dcData.price || 0,
+                                    rating: dcData.rating || dcData.avgStar || 0,
+                                    reviews: dcData.reviews || dcData.reviewCount || dcData.totalValidNum || 0,
+                                    images: dcData.imagePathList || dcData.images || [],
+                                    description: dcData.description || dcData.desc || '',
+                                    specs: []
+                                };
+                                console.log('Extracted from DCData:', productData.title, productData.images.length, 'images');
+                            } else if (dcData.name || dcData.subject) {
+                                // Fallback: even without images, extract title
+                                productData = {
+                                    title: dcData.name || dcData.subject || '',
+                                    salePrice: 0,
+                                    originalPrice: 0,
+                                    rating: 0,
+                                    reviews: 0,
+                                    images: [],
+                                    description: dcData.description || '',
+                                    specs: []
+                                };
+                                console.log('Extracted title from DCData:', productData.title);
+                            }
+                        } catch (e) {
+                            console.log('Failed to parse DCData JSON:', e.message);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Method 2: Extract from window.runParams (old format)
         const runParamsStart = html.indexOf('window.runParams');
-        if (runParamsStart !== -1) {
-            console.log('Found window.runParams at position:', runParamsStart);
+        if (runParamsStart !== -1 && !productData) {
+            console.log('Found window.runParams, trying to parse...');
             
-            // Extract a large chunk starting from runParams
-            const runParamsSection = html.substring(runParamsStart, runParamsStart + 500000); // 500KB max
-            
-            // Try to find the JSON object
+            const runParamsSection = html.substring(runParamsStart, runParamsStart + 500000);
             const openBrace = runParamsSection.indexOf('{');
             if (openBrace !== -1) {
-                // Find matching closing brace
                 let braceCount = 0;
                 let closePos = openBrace;
                 for (let i = openBrace; i < runParamsSection.length; i++) {
@@ -87,25 +149,17 @@ async function fetchAliExpressProduct(url) {
                 if (closePos > openBrace) {
                     try {
                         const jsonStr = runParamsSection.substring(openBrace, closePos + 1);
-                        console.log('Attempting to parse JSON, length:', jsonStr.length);
                         const runParams = JSON.parse(jsonStr);
-                        console.log('RunParams parsed successfully, keys:', Object.keys(runParams));
+                        console.log('RunParams keys:', Object.keys(runParams));
                         
-                        // Try multiple data paths
                         let productInfo = null;
                         if (runParams.data?.productInfoComponent) {
                             productInfo = runParams.data.productInfoComponent;
-                            console.log('Found data.productInfoComponent');
                         } else if (runParams?.productInfoComponent) {
                             productInfo = runParams.productInfoComponent;
-                            console.log('Found productInfoComponent');
-                        } else if (runParams.data?.skuProps?.productId) {
-                            productInfo = runParams.data;
-                            console.log('Found data.skuProps');
                         }
                         
                         if (productInfo) {
-                            console.log('Found productInfo, extracting data...');
                             productData = {
                                 title: productInfo.subject || productInfo.title || '',
                                 salePrice: productInfo.price?.salePrice?.value || productInfo.price?.salePrice || 0,
@@ -119,13 +173,38 @@ async function fetchAliExpressProduct(url) {
                             console.log('Extracted from runParams:', productData.title);
                         }
                     } catch (e) {
-                        console.log('Failed to parse runParams JSON:', e.message);
+                        console.log('Failed to parse runParams:', e.message);
                     }
                 }
             }
         }
         
-        // Method 2: Extract from JSON-LD or other script tags
+        // Method 3: Extract from meta tags (og:title, og:description, og:image)
+        if (!productData) {
+            console.log('Trying meta tags extraction...');
+            const dom = new JSDOM(html);
+            const document = dom.window.document;
+            
+            const ogTitle = document.querySelector('meta[property="og:title"]');
+            const ogImage = document.querySelector('meta[property="og:image"]');
+            const ogDescription = document.querySelector('meta[property="og:description"]');
+            
+            if (ogTitle) {
+                productData = {
+                    title: ogTitle.getAttribute('content') || '',
+                    salePrice: 0,
+                    originalPrice: 0,
+                    rating: 0,
+                    reviews: 0,
+                    images: ogImage ? [ogImage.getAttribute('content')] : [],
+                    description: ogDescription ? ogDescription.getAttribute('content') : '',
+                    specs: []
+                };
+                console.log('Extracted from meta tags:', productData.title);
+            }
+        }
+        
+        // Method 4: Extract from JSON-LD or other script tags
         if (!productData) {
             console.log('Trying JSON-LD extraction...');
             const jsonLdMatches = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
