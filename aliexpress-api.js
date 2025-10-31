@@ -304,6 +304,7 @@ app.post('/api/aliexpress/product', async (req, res) => {
         
         if (!url) {
             return res.status(400).json({
+                success: false,
                 error: 'URL is required',
                 message: 'Please provide a valid AliExpress product URL'
             });
@@ -312,6 +313,7 @@ app.post('/api/aliexpress/product', async (req, res) => {
         // Validate URL
         if (!url.includes('aliexpress.com') || !url.includes('/item/')) {
             return res.status(400).json({
+                success: false,
                 error: 'Invalid URL',
                 message: 'Please provide a valid AliExpress product URL'
             });
@@ -328,9 +330,19 @@ app.post('/api/aliexpress/product', async (req, res) => {
         console.error('API Error:', error);
         res.status(500).json({
             success: false,
-            error: error.message || 'Failed to fetch product data'
+            error: error.message || 'Failed to fetch product data',
+            message: error.message || 'Failed to fetch product data'
         });
     }
+});
+
+// Add GET endpoint for testing (optional)
+app.get('/api/aliexpress/product', (req, res) => {
+    res.status(405).json({
+        success: false,
+        error: 'Method not allowed',
+        message: 'Please use POST method with JSON body: { "url": "https://aliexpress.com/item/..." }'
+    });
 });
 
 // Start server
